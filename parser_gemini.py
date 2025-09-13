@@ -10,75 +10,80 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Using gemini-1.5-flash as specified, which is a good choice for speed
+    # Using gemini-1.5-flash for speed and cost-effectiveness
     model = genai.GenerativeModel('gemini-1.5-flash') 
 else:
-    print("Warning: GEMINI_API_KEY not found in environment variables")
-    # You might want to raise an error or exit here in a production app
-    # For now, it will return None from parse_message_with_gemini if key is missing
+    print("Warning: GEMINI_API_KEY not found in environment variables. Gemini parsing will not work.")
+    # In a production app, you might want to raise an error or have a more robust fallback.
 
-# Master Prompt for task extraction - REFINED VERSION
+# Master Prompt for task extraction (v3.0 - Refined for robustness and concise deadlines)
 MASTER_PROMPT = """
-You are PingPlan, an intelligent and precise task-parsing AI assistant for a WhatsApp bot.
-Your mission is to process user messages and extract structured task information.
+You are PingPlan, an expert AI assistant for a WhatsApp bot, specializing in precisely parsing user messages into structured task data.
 
-**Your response MUST be ONLY one of the following:**
+Your response MUST be ONLY one of the following:
 1.  A valid JSON object (Python dictionary format).
-2.  The literal string "null" (without quotes), if the message is not an actionable task.
+2.  The literal string "null" (without quotes).
 
-**JSON Object Structure (when applicable):**
-* **"task_description"**: The main, clear description of the task or action.
-    * **Rule:** This field is REQUIRED and must NOT be empty.
-* **"deadline"**: The specific date, time, or relative timeframe for completion.
-    * **Rule:** Extract as precisely as possible (e.g., "Monday 9 PM", "March 15th"). If no deadline is explicitly mentioned or clearly inferable, set this value to an empty string "".
-* **"project_name"**: The associated project, course, subject, or context.
-    * **Rule:** Extract concise names (e.g., "CS101", "Marketing Presentation", "Groceries"). If no project/context is mentioned or clearly inferable, set this value to an empty string "".
+**JSON Object Rules (when applicable):**
+* **"task_description"**: REQUIRED. A clear, actionable summary of the task. Must NOT be an empty string.
+* **"deadline"**: The most relevant due date, time, or timeframe.
+    * **Rule:** If multiple dates/times are mentioned for a single event, summarize them concisely (e.g., "Multiple sessions, Sep 9-19", "Every Monday for 4 weeks"). If a single, clear deadline exists, extract it precisely (e.g., "Monday 9 PM", "March 15th, 2024"). If no deadline is found or clearly inferable, use an empty string "".
+* **"project_name"**: A concise project, course, subject, or context name.
+    * **Rule:** Extract if clearly present (e.g., "CS101", "Marketing Presentation", "Groceries"). If none is found or clearly inferable, use an empty string "".
 
-**CRITICAL DECISION RULE (When to return "null"):**
-You **MUST** return "null" if the user's message falls into any of these categories:
-* **Non-Actionable Phrases:** Greetings (e.g., "hi", "hello"), expressions of gratitude (e.g., "thanks", "thank you"), farewells (e.g., "bye"), or general conversation.
-* **Questions:** Any message that is clearly a question (e.g., "What's up?", "How are you?").
-* **Bot Commands:** Messages that are clearly meant as commands for the bot itself (e.g., "show my tasks", "delete 1", "help"). These are handled by the main application, not by you.
-* **Ambiguous/Empty:** Messages that are too vague, too short, or simply do not contain a discernible task.
+**CRITICAL RULE for returning "null":**
+You MUST return "null" if the user's message is NOT a clear, actionable task. This is paramount for the bot's user experience. This includes:
+* General conversation, greetings (e.g., "hi", "hello"), farewells (e.g., "bye"), or expressions of gratitude (e.g., "thanks", "thank you").
+* Questions (e.g., "What's up?", "How are you?").
+* Bot commands (e.g., "show my tasks", "delete 1", "help", "list tasks"). These are handled by the main application, not by you.
+* Ambiguous statements, very short messages, or text that lacks a clear action to be taken. If in doubt, return "null".
 
 **Your Goal for Testing and Debugging:**
-Aim for extreme precision. If there's any doubt it's a task, return "null". This will help in testing the `null` path and ensuring the bot's fallback messages are triggered correctly when you intend them to be.
+Aim for extreme precision. Always prioritize returning "null" if the message is not unequivocally an actionable task requiring extraction. This ensures the main bot application can deliver appropriate fallback messages.
 
 **EXAMPLES (Observe both JSON and "null" responses):**
 
-User message: "Submit the physics report by Sunday at 9pm"
+User message: "CS 101 Assignment 3 - Implement a binary search tree. Due: March 15th, 2024"
 Your response:
-{"task_description": "Submit the physics report", "deadline": "Sunday at 9pm", "project_name": "physics"}
+{"task_description": "Implement a binary search tree (Assignment 3)", "deadline": "March 15th, 2024", "project_name": "CS 101"}
 
-User message: "don't forget to buy groceries after work"
+User message: "Please Note Ignitors sessions will be held next week on September 9, 10, 13, 15, 16, and 19 from 12:00 PM to 12:50 PM."
 Your response:
-{"task_description": "buy groceries after work", "deadline": "", "project_name": "groceries"}
+{"task_description": "Attend Ignitors sessions", "deadline": "Multiple sessions, Sep 9-19", "project_name": "Ignitors"}
 
-User message: "finish the presentation"
+User message: "study for DBMS test on Monday"
 Your response:
-{"task_description": "finish the presentation", "deadline": "", "project_name": ""}
+{"task_description": "Study for test", "deadline": "Monday", "project_name": "DBMS"}
 
-User message: "Check on the project status"
+User message: "finish the presentation for marketing"
 Your response:
-{"task_description": "Check on the project status", "deadline": "", "project_name": ""}
+{"task_description": "Finish the presentation", "deadline": "", "project_name": "Marketing"}
+
+User message: "I need to buy some milk and bread"
+Your response:
+{"task_description": "Buy milk and bread", "deadline": "", "project_name": "Groceries"}
+
+User message: "can you show me my tasks please"
+Your response:
+null
+
+User message: "sounds good"
+Your response:
+null
 
 User message: "thank you so much for your help!"
 Your response:
 null
 
-User message: "hello PingPlan"
+User message: "Hello PingPlan, how are you today?"
 Your response:
 null
 
-User message: "show my tasks"
+User message: "?"
 Your response:
 null
 
-User message: "What should I do today?"
-Your response:
-null
-
-User message: "Okay, sounds good"
+User message: "Just finished the report"
 Your response:
 null
 """
@@ -95,63 +100,80 @@ def parse_message_with_gemini(user_message):
                       Returns None if parsing fails or message is not a task
     """
     if not GEMINI_API_KEY:
-        print("Error: GEMINI_API_KEY not configured")
+        print("Error: GEMINI_API_KEY not configured. Cannot call Gemini API.")
         return None
     
     try:
         # Combine master prompt with user message for Gemini
-        # Added explicit "User message:" and "Your response:" for clarity to the model
+        # Encapsulate user_message in quotes to clearly delineate it for the model
         full_prompt = MASTER_PROMPT + "\n\nUser message: \"" + user_message + "\"\nYour response:"
         
         # Generate content using Gemini
         response = model.generate_content(full_prompt)
         
-        # Extract the response text and clean potential markdown
+        # Extract the response text and clean potential markdown (e.g., ```json)
         response_text = response.text.strip()
         if response_text.startswith('```json'):
             response_text = response_text.replace('```json', '').replace('```', '').strip()
-        elif response_text.startswith('```'):
+        elif response_text.startswith('```'): # Catch if it just uses ```
             response_text = response_text.replace('```', '').strip()
         
-        # --- NEW LOGIC: Check for 'null' response from Gemini ---
+        # --- CRITICAL NULL CHECK: If Gemini returns 'null', it's not a task ---
         if response_text.lower() == 'null':
-            print(f"Gemini classified message '{user_message}' as a non-task.")
-            return None # Return None to indicate it's not a parsable task
-        # --- END NEW LOGIC ---
+            print(f"DEBUG: Gemini classified message '{user_message}' as a non-task. Returning None.")
+            return None # Indicate to app.py that this is not a parsable task
+        # --- END CRITICAL NULL CHECK ---
 
-        # Attempt to parse as JSON
+        # Attempt to parse the response as JSON
         try:
             parsed_data = json.loads(response_text)
             
-            # Validate that we have the required keys and task_description is not empty
+            # Validate that all required keys are present and task_description is not empty
             required_keys = ['task_description', 'deadline', 'project_name']
             if all(key in parsed_data for key in required_keys) and parsed_data.get("task_description"):
+                print(f"DEBUG: Successfully parsed task from '{user_message}': {parsed_data}")
                 return parsed_data
             else:
-                print(f"Warning: Missing required keys or empty task_description in parsed data: {parsed_data}")
+                print(f"WARNING: Gemini returned invalid JSON structure or empty task_description for message '{user_message}': {parsed_data}. Returning None.")
                 return None
                 
         except json.JSONDecodeError as e:
-            print(f"JSON parsing error: {e}")
+            print(f"ERROR: JSON parsing failed for Gemini response for message '{user_message}': {e}")
             print(f"Raw response from Gemini (expected JSON or 'null'): '{response_text}'")
             return None
             
     except Exception as e:
-        print(f"Error calling Gemini API: {e}")
-        # Consider logging the full exception for better debugging
+        print(f"ERROR: Exception calling Gemini API for message '{user_message}': {e}")
+        # Consider logging the full traceback for better debugging in a production environment
         return None
 
-# Test function (can be removed in production, but very useful now)
+# Test function (extremely useful for local debugging)
 def test_parser():
-    """Test the parser with sample messages, including non-tasks"""
+    """Test the parser with a variety of sample messages, including non-tasks and complex tasks."""
+    print("--- Running Parser Test Suite ---")
     test_messages = [
+        # Valid tasks
         "CS 101 Assignment 3 - Implement a binary search tree. Due: March 15th, 2024",
-        "Hey everyone, don't forget the calculus homework is due tomorrow at 11:59 PM. Chapter 5 problems 1-20.",
-        "Group meeting tomorrow at 2 PM to discuss the marketing presentation",
-        "thank you so much!", # Should return null
-        "hello",              # Should return null
-        "show my tasks",      # Should return null (bot command)
-        "what's for dinner?"  # Should return null (question)
+        "Please Note Ignitors sessions will be held next week on September 9, 10, 13, 15, 16, and 19 from 12:00 PM to 12:50 PM.",
+        "study for DBMS test on Monday",
+        "finish the presentation for marketing",
+        "I need to buy some milk and bread",
+        "Upload my posters for the creators showcase by 7 PM tonight",
+        "Submit this assignment by Monday",
+
+        # Non-tasks (should return None)
+        "thank you so much!",
+        "hello",
+        "show my tasks",
+        "what's for dinner?",
+        "Okay, sounds good",
+        "?",
+        "hiii",
+        "Hello world",
+        "Just finished the report", # Not an actionable future task
+        "Can you help me?",
+        "delete 2", # Bot command
+        "" # Empty message
     ]
     
     for msg in test_messages:

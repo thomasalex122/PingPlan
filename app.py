@@ -3,7 +3,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 import os
 import json
 from dotenv import load_dotenv
-from parser_gemini import parse_message_with_gemini
+from parser_gemini import parse_message_with_gemini # Ensure this is updated too!
 
 # Load environment variables from .env file
 load_dotenv()
@@ -63,18 +63,24 @@ def whatsapp_webhook():
     
     # Handle different commands
     if not incoming_msg:
-        response_text = "Please send me a message! I can help you manage your tasks."
+        response_text = "Hello! I'm PingPlan, your task manager. Forward me a message with a task, or type 'show my tasks' to see what's due."
     
-    # Show tasks command
-    elif any(keyword in incoming_msg.lower() for keyword in ['show my tasks', 'show tasks', 'list tasks', 'my tasks']):
+    # --- UPDATED: More flexible "Show tasks" command recognition ---
+    elif 'show' in incoming_msg.lower() and 'task' in incoming_msg.lower():
         user_tasks = tasks[from_number]
         if not user_tasks:
             response_text = "You don't have any tasks yet! Forward me a message with a task to get started."
         else:
             response_text = "*Your Tasks:*\n\n"
             for i, task in enumerate(user_tasks, 1):
-                deadline_text = f"_Due: {task['deadline']}_" if task['deadline'] != "Not specified" else "_No deadline specified_"
-                response_text += f"{i}. *{task['task_description']}*\n   {deadline_text}\n   Project: {task['project_name']}\n\n"
+                # --- UPDATED: Handle empty string deadlines and projects from Gemini ---
+                deadline_text = f"_Due: {task['deadline']}_" if task['deadline'] else "_No deadline specified_"
+                project_text = f"Project: {task['project_name']}" if task['project_name'] else ""
+                
+                response_text += f"{i}. *{task['task_description']}*\n   {deadline_text}\n"
+                if project_text: # Only add project line if it exists
+                    response_text += f"   {project_text}\n"
+                response_text += "\n" # Add an extra newline for spacing
             response_text += "Type 'delete [number]' to remove a task."
     
     # Delete task command
@@ -98,16 +104,22 @@ def whatsapp_webhook():
         # Parse the message with Gemini
         parsed_task = parse_message_with_gemini(incoming_msg)
         
-        if parsed_task:
+        if parsed_task: # parse_message_with_gemini returns None if it's not a task
             # Add task to user's list
             tasks[from_number].append(parsed_task)
             save_tasks(tasks)
             
             # Create confirmation message
-            deadline_text = f"_Due: {parsed_task['deadline']}_" if parsed_task['deadline'] != "Not specified" else "_No deadline specified_"
-            response_text = f"✅ *Task Added!*\n\n*{parsed_task['task_description']}*\n{deadline_text}\nProject: {parsed_task['project_name']}\n\nType 'show my tasks' to see all your tasks."
+            # --- UPDATED: Handle empty string deadlines and projects from Gemini ---
+            deadline_text = f"_Due: {parsed_task['deadline']}_" if parsed_task['deadline'] else "_No deadline specified_"
+            project_text = f"Project: {parsed_task['project_name']}" if parsed_task['project_name'] else ""
+
+            response_text = f"✅ *Task Added!*\n\n*{parsed_task['task_description']}*\n{deadline_text}\n"
+            if project_text: # Only add project line if it exists
+                response_text += f"{project_text}\n"
+            response_text += "\nType 'show my tasks' to see all your tasks."
         else:
-            # Fallback for parsing failures
+            # Fallback for parsing failures or non-task messages (Gemini returns None)
             response_text = "Sorry, I didn't understand that. Try:\n• Forwarding a task message\n• Typing 'show my tasks'\n• Using 'delete [number]' to remove a task"
     
     # Add the response message
